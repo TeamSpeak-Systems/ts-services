@@ -1,0 +1,55 @@
+version: "3.8"
+
+services:
+
+  traefik:
+    command:
+      - "--log.level=DEBUG"
+      - "--api.insecure=true"
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.internal-router.address=:8099"
+      #accesslog & tracing for debugging
+      - "--accesslog=true"
+      #- "--accesslog.format=json"
+      #- "--accesslog.fields.defaultmode=keep"
+      #- "--accesslog.fields.headers.defaultmode=keep"
+      #- "--tracing=true"
+
+  teamspeak:
+    labels:
+      - "traefik.http.routers.teamspeak.entrypoints=web"
+      - "traefik.http.routers.teamspeak.tls=false"
+
+  synapse:
+    labels:
+      - "traefik.http.routers.synapse.entrypoints=web"
+      - "traefik.http.routers.synapse.tls=false"
+
+  discovery:
+    labels:
+      - "traefik.http.middlewares.nginx-matrix-replace.replacepathregex.replacement=/http/$$1.json"
+      - "traefik.http.routers.nginx-matrix.entrypoints=web"
+      - "traefik.http.routers.nginx-matrix.tls=false"
+
+      - "traefik.http.middlewares.nginx-teamspeak-replace.replacepath.path=/http/teamspeak/teamspeak.json"
+      - "traefik.http.routers.nginx-teamspeak.entrypoints=web"
+      - "traefik.http.routers.nginx-teamspeak.tls=false"
+
+  minio:
+    labels:
+      - "traefik.http.routers.minio.entrypoints=web"
+      - "traefik.http.routers.minio.tls=false"
+
+  files:
+    environment:
+        - 'STORAGE={"AccessKeyID":"${MINIO_ACCESS_KEY_NAME}", "SecretAccessKey":"${MINIO_ACCESS_KEY_SECRET}", "EndPoint" : "${TEAMSPEAK_DOMAIN}", "InternalEndPoint" : "minio:9000", "Secure" : false, "InternalSecure" : false, "SQSNotifyArn" : "arn:minio:sqs::TS:webhook",  "BucketName": "filesbucket", "expiry":"30s"}'
+    labels:
+      - "traefik.http.routers.files.entrypoints=web"
+      - "traefik.http.routers.files.tls=false"
+
+  auth:
+    labels:
+      - "traefik.http.routers.auth.entrypoints=web"
+      - "traefik.http.routers.auth.tls=false"
