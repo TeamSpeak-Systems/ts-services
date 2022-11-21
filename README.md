@@ -3,8 +3,9 @@
 The 'ts-services' repository is used for hosting the TeamSpeak 5 services as teamspeak_server, synapse, postgresql using docker compose.
 
     git clone https://github.com/TeamSpeak-Systems/ts-services
+    cd ts-services
     
-Please use a tag as beta-58, this master branch is only here to guide you to a properly tagged release.
+Use a tag as *beta-58* as this *master branch* is only here to guide you to a properly tagged release.
 
     git tag
     beta-57
@@ -18,9 +19,14 @@ Please use a tag as beta-58, this master branch is only here to guide you to a p
     beta-58rc5
     beta-58rc6
     beta-58rc7
-    
+    ...
+
+**Note: In general avoid using *rc* releases, i.e. something like beta-58rc7, as this indicates we still update things which might break your installation.**
+
 And then use one of these with:
 
     git checkout tags/beta-57 -b beta-57
-
-See all tags: https://github.com/TeamSpeak-Systems/ts-services/tags
+    
+**Note: Also don't skip updates: if you have beta-55 and there is already a beta-57, you should update to beta-56 and *then* to beta-57.**
+    
+Once you have a checkout, follow the README.md coming with the release.
