@@ -20,6 +20,8 @@ Use a tag as *beta-58* as this *master branch* is only here to guide you to a pr
     beta-58rc6
     beta-58rc7
     ...
+    
+Note: You can get a list of tags here https://github.com/TeamSpeak-Systems/ts-services/tags (don't use the download feature, use git checkout as described below).
 
 **Note: In general avoid using *rc* releases, i.e. something like beta-58rc7, as this indicates we still update things which might break your installation.**
 
