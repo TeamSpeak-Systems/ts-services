@@ -1,0 +1,411 @@
+version: "3.8"
+name: "ts-services"
+
+services:
+
+  traefik:
+    image: traefik:v2.9.4
+    container_name: "traefik"
+    restart: on-failure
+    command:
+      #- "--log.level=DEBUG"
+      - "--api.insecure=true"
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.internal-router.address=:8099"
+      #accesslog & tracing for debugging
+      - "--accesslog=true"
+      #- "--accesslog.format=json"
+      #- "--accesslog.fields.defaultmode=keep"
+      #- "--accesslog.fields.headers.defaultmode=keep"
+      #- "--tracing=true"
+      #https settings
+      - "--entrypoints.websecure.address=:443"
+      - "--certificatesresolvers.ts-resolver.acme.email=${EMAIL}"
+      - "--certificatesresolvers.ts-resolver.acme.storage=/etc/traefik/acme/acme.json"
+      - "--certificatesresolvers.ts-resolver.acme.tlschallenge=true"
+      - "--entrypoints.web.http.redirections.entrypoint.to=websecure"
+      - "--entrypoints.web.http.redirections.entrypoint.scheme=https"
+    ports:
+      - "80:80"
+      - "443:443"
+      #- "8098:8080"
+    expose:
+      - "8099"
+    volumes:
+      - "/var/run/docker.sock:/var/run/docker.sock:ro"
+      - "./acme:/etc/traefik/acme" # map host FS ./acme folder to the traefik container to store acme.json (TLS certificates)
+    networks:
+      ts-net:
+        aliases:
+          - internal-router
+
+  teamspeak:
+    image: teamspeaksystems/teamspeak_server:58rc11
+    #build:
+    #  dockerfile: ../teamspeak_server/docker/Dockerfile.hacking
+    #  context: ../teamspeak_server/
+    restart: on-failure
+    expose:
+      - "9987:9987/udp"
+      - "10011/tcp" # RAW, Telnet
+      - "10022/tcp" # SSH, 'secure' Telnet
+    ports:
+      - "9987:9987/udp"
+      - "10022:10022/tcp" # SSH, 'secure' Telnet
+      - "10011:10011/tcp" # RAW, Telnet
+    environment:
+      - TEAMSPEAK_LICENSE_ACCEPTED=true
+      #- TSSERVER_SERVERADMIN_PASSWORD=password
+      - TSSERVER_HINTS_ENABLED=true
+      - WEBRTC_SERVER_ENABLED=false
+      #- TSSERVER_LOG_APPEND=true
+      #- QUERY_PROTOCOL_TELNET=true
+      #- QUERY_PROTOCOL_SSH=true
+      - QUERY_PROTOCOL_WEBQUERY=true
+      - EVENT_TO_DB_LOGGING=true
+      - TSSERVER_DB_PLUGIN=tsdb_postgresql
+      - TSSERVER_DB_HOST=postgresql
+      - TSSERVER_DB_PORT=5432
+      - TSSERVER_DB_USER=teamspeak
+      - TSSERVER_DB_PASSWORD=${DB_TEAMSPEAK_PW}
+      - TSSERVER_DB_NAME=teamspeak
+      - TSSERVER_DB_WAITUNTILREADY=10
+      - TSSERVER_DB_SQLCREATEPATH=create_postgresql
+      - API_KEY_CHAT=${API_KEY_CHAT}
+      - TEAMSPEAK_WEBQUERY_ADMIN_APIKEY=${TEAMSPEAK_WEBQUERY_ADMIN_APIKEY}
+      - MATRIX_JWT_SHARED_SECRET=${MATRIX_JWT_SHARED_SECRET}
+      - FILES_JWT_SHARED_SECRET=${FILES_JWT_SHARED_SECRET}
+      - TEAMSPEAK_DOMAIN=${TEAMSPEAK_DOMAIN}
+      #- DEBUG_PRINT_CONFIG_AND_PASSWORDS_TO_LOGFILE=true
+      #- EXTRACONFIG=#additional values added to config file
+    volumes:
+      - type: bind
+        source: ./teamspeak_server
+        target: /var/tsserver
+      #- type: volume
+      #  source: teamspeak
+    networks:
+      ts-net:
+    labels:
+      - "traefik.enable=true"
+      # Middlewares
+      - "traefik.http.middlewares.teamspeak-stripprefix.stripprefix.prefixes=/teamspeak/v1"
+      - "traefik.http.middlewares.teamspeak-ratelimit.ratelimit.average=100"
+      - "traefik.http.middlewares.teamspeak-ratelimit.ratelimit.burst=50"
+      # External router
+      - "traefik.http.routers.teamspeak.rule=Host(`${TEAMSPEAK_DOMAIN}`) && PathPrefix(`/teamspeak/v1`)"
+      - "traefik.http.routers.teamspeak.entrypoints=websecure"
+      - "traefik.http.routers.teamspeak.tls=true"
+      - "traefik.http.routers.teamspeak.tls.certresolver=ts-resolver"
+      - "traefik.http.routers.teamspeak.service=teamspeak"
+      - "traefik.http.services.teamspeak.loadbalancer.server.port=10080"
+      - "traefik.http.routers.teamspeak.middlewares=teamspeak-stripprefix@docker,teamspeak-ratelimit@docker"
+      # Internal router
+      - "traefik.http.routers.teamspeak-internal.rule=PathPrefix(`/teamspeak/v1`)"
+      - "traefik.http.routers.teamspeak-internal.entrypoints=internal-router"
+      - "traefik.http.routers.teamspeak-internal.service=teamspeak-internal"
+      - "traefik.http.services.teamspeak-internal.loadbalancer.server.port=10080"
+      - "traefik.http.routers.teamspeak-internal.middlewares=teamspeak-stripprefix@docker"
+
+  appserver:
+    image: teamspeaksystems/teamspeak_appserver:58rc11
+    #build: ../ts-appserver
+    #image: ts-appserver:latest
+    restart: on-failure
+    stop_grace_period: 1m30s
+    environment:
+      - MATRIX_APPSSERVER_TOKEN=${MATRIX_APPSSERVER_TOKEN}
+      - MATRIX_HOMESERVER_TOKEN=${MATRIX_HOMESERVER_TOKEN}
+      - MATRIX_URL=http://internal-router:8099/_matrix
+      - MATRIX_TIMEOUT=10s
+      - MATRIX_DOMAIN=${TEAMSPEAK_DOMAIN}
+      - EVENTS_KEY_ID=tsevents
+      - EVENTS_KEY=${EVENTS_SIGN_SECRET}
+      - BIND_ADDRESS=0.0.0.0:5000
+      - LOG_LEVEL=info
+    expose:
+      - "5000"
+    networks:
+      ts-net:
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.appserver.rule=PathPrefix(`/matrix-appserver/`)"
+      - "traefik.http.routers.appserver.entrypoints=internal-router"
+      - "traefik.http.routers.appserver.service=appserver"
+      - "traefik.http.services.appserver.loadbalancer.server.port=5000"
+
+  synapse:
+    image: matrixdotorg/synapse:v1.61.0
+    #image: synapse-hacking:latest
+    #build:
+    #  context: ../synapse
+    #  dockerfile: ./docker/Dockerfile
+    # image v1.62 fails, TS5SERVER-120
+    restart: on-failure
+    environment:
+      - PYTHONPATH=/data/site-packages
+      # in preparation for TS5SERVER-133: make synapse container declarative
+      #- MATRIX_APPSSERVER_URL=matrix-appserver:5000               # used in app_service_1.yaml
+      #- MATRIX_APPSSERVER_TOKEN=${MATRIX_APPSSERVER_TOKEN}        # used in app_service_1.yaml
+      #- MATRIX_HOMESERVER_TOKEN=${MATRIX_HOMESERVER_TOKEN}        # used in app_service_1.yaml
+      #- MATRIX_JWT_SHARED_SECRET=${MATRIX_JWT_SHARED_SECRET}      # used in homeserver.yaml
+      #- DB_SYNAPSE_PW=${DB_SYNAPSE_PW}                            # used in homeserver.yaml
+    expose:
+      - "8008"
+    volumes:
+      - type: volume
+        source: synapse
+        target: /data
+    networks:
+      ts-net:
+    labels:
+      - "traefik.enable=true"
+
+      #external
+      - "traefik.http.routers.synapse.rule=Host(`${TEAMSPEAK_DOMAIN}`) && PathPrefix(`/_matrix/`)"
+      - "traefik.http.routers.synapse.entrypoints=websecure"
+      - "traefik.http.routers.synapse.tls=true"
+      - "traefik.http.routers.synapse.tls.certresolver=ts-resolver"
+      - "traefik.http.routers.synapse.service=synapse"
+      - "traefik.http.services.synapse.loadbalancer.server.port=8008"
+
+      #internal
+      - "traefik.http.routers.synapse-internal.rule=PathPrefix(`/_matrix/`)"
+      - "traefik.http.routers.synapse-internal.entrypoints=internal-router"
+      - "traefik.http.routers.synapse-internal.service=synapse-internal"
+      - "traefik.http.services.synapse-internal.loadbalancer.server.port=8008"
+
+  discovery:
+    image: teamspeaksystems/teamspeak_discovery:58rc11
+    #build:
+    #  dockerfile: ../ts-discovery/Dockerfile
+    #  context: ../ts-discovery
+    #image: ts-discovery:latest
+    restart: on-failure
+    environment:
+      - TEAMSPEAK_DOMAIN=${TEAMSPEAK_DOMAIN}
+    expose:
+      - "80"
+    networks:
+      ts-net:
+    labels:
+      - "traefik.enable=true"
+
+      #cache responses for 1 hour on client machine
+      - "traefik.http.middlewares.nginx-cache-control.headers.customresponseheaders.Cache-Control=public, max-age=3600"
+
+      # handle discovery for matrix
+      - "traefik.http.routers.nginx-matrix.rule=Host(`${TEAMSPEAK_DOMAIN}`) && Path(`/.well-known/matrix/{what:(client|server)}`)"
+      - "traefik.http.routers.nginx-matrix.entrypoints=websecure"
+      - "traefik.http.routers.nginx-matrix.tls=true"
+      - "traefik.http.routers.nginx-matrix.tls.certresolver=ts-resolver"
+      - "traefik.http.routers.nginx-matrix.service=nginx-matrix"
+      - "traefik.http.routers.nginx-matrix.middlewares=nginx-matrix-chain@docker"
+      - "traefik.http.middlewares.nginx-matrix-chain.chain.middlewares=nginx-matrix-replace,nginx-cache-control"
+      - "traefik.http.middlewares.nginx-matrix-replace.replacepathregex.regex=^/.well-known/(.*)$$"
+      - "traefik.http.middlewares.nginx-matrix-replace.replacepathregex.replacement=/https/$$1.json"
+      - "traefik.http.services.nginx-matrix.loadbalancer.server.port=80"
+
+      # handle discovery for teamspeak
+      - "traefik.http.routers.nginx-teamspeak.rule=Host(`${TEAMSPEAK_DOMAIN}`) && Path(`/.well-known/teamspeak/{vsuuid:[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}}`)"
+      - "traefik.http.routers.nginx-teamspeak.entrypoints=websecure"
+      - "traefik.http.routers.nginx-teamspeak.tls=true"
+      - "traefik.http.routers.nginx-teamspeak.tls.certresolver=ts-resolver"
+      - "traefik.http.routers.nginx-teamspeak.service=nginx-teamspeak"
+      - "traefik.http.routers.nginx-teamspeak.middlewares=nginx-teamspeak-chain@docker"
+      - "traefik.http.middlewares.nginx-teamspeak-chain.chain.middlewares=nginx-teamspeak-replace,nginx-cache-control"
+      - "traefik.http.middlewares.nginx-teamspeak-replace.replacepath.path=/https/teamspeak/teamspeak.json"
+      - "traefik.http.services.nginx-teamspeak.loadbalancer.server.port=80"
+
+  minio:
+    image: "minio/minio:RELEASE.2021-09-18T18-09-59Z"
+    restart: on-failure
+    expose:
+      - "9000"
+    networks:
+      ts-net:
+    volumes:
+      - type: volume
+        source: minio
+        target: /data
+    environment:
+        - MINIO_ROOT_USER=$MINIO_ACCESS_KEY_NAME
+        - MINIO_ROOT_PASSWORD=$MINIO_ACCESS_KEY_SECRET
+        - MINIO_NOTIFY_WEBHOOK_ENABLE_TS=on
+        - MINIO_NOTIFY_WEBHOOK_ENDPOINT_TS=http://internal-router:8099/files/v1/storage/events
+        - MINIO_NOTIFY_WEBHOOK_AUTH_TOKEN_TS=$MINIO_NOTIFY_WEBHOOK_TOKEN
+    command: server /data/
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.minio.rule=Host(`${TEAMSPEAK_DOMAIN}`) && PathPrefix(`/filesbucket/{rest:.+}`) && Method(`GET`, `PUT`)"
+      - "traefik.http.routers.minio.entrypoints=websecure"
+      - "traefik.http.routers.minio.tls=true"
+      - "traefik.http.routers.minio.tls.certresolver=ts-resolver"
+      - "traefik.http.routers.minio.service=minio"
+      #traefik docker (label) provider has no way to specify that a headers has to be removed
+      #uploading a file in the ts5client will fail if the removeAuthorization for minio is not used
+      - "traefik.http.middlewares.removeAuthorization.headers.customrequestheaders.authorization: ''"
+      - "traefik.http.routers.minio.middlewares=removeAuthorization"
+      - "traefik.http.services.minio.loadbalancer.server.port=9000"
+
+  postgresql:
+    image: postgres:13-alpine
+    restart: on-failure
+    expose:
+      - "5432"
+    networks:
+      ts-net:
+    volumes:
+      - type: volume
+        source: postgresql
+        target: /var/lib/postgresql/data
+    shm_size: 128M
+    stop_signal: SIGTERM
+    environment:
+        - POSTGRES_PASSWORD=$POSTGRES_PASSWORD
+
+  files:
+    image: teamspeaksystems/teamspeak_files:58rc11
+    #build: ../ts-files
+    #image: ts-files:latest
+    restart: on-failure
+    environment:
+      - LISTEN_PRIVATE=:8050
+      - LISTEN_PUBLIC=:8051
+      - PGHOST=postgresql
+      - PGDATABASE=files
+      - PGUSER=files
+      - PGPASSWORD=$DB_FILES_PW
+      - 'PUBLIC_JWT_KEYS={"tsserver":"${FILES_JWT_SHARED_SECRET}"}'
+      - 'PRIVATE_JWT_KEYS={"tsevents":"${EVENTS_JWT_SHARED_SECRET}"}'
+      - 'SIGN_KEYS={"tsevents":"${EVENTS_SIGN_SECRET}"}'
+      - 'STORAGE={"AccessKeyID":"${MINIO_ACCESS_KEY_NAME}", "SecretAccessKey":"${MINIO_ACCESS_KEY_SECRET}", "EndPoint" : "${TEAMSPEAK_DOMAIN}", "InternalEndPoint" : "minio:9000", "Secure" : true, "InternalSecure" : false, "SQSNotifyArn" : "arn:minio:sqs::TS:webhook", "BucketName": "filesbucket", "expiry":"30s"}'
+      - MINIO_NOTIFY_WEBHOOK_AUTH_TOKEN=$MINIO_NOTIFY_WEBHOOK_TOKEN
+      - PATH_PREFIX=/files
+      - LOG_LEVEL=info
+    expose:
+      - "8050"
+      - "8051"
+    networks:
+      ts-net:
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.files.rule=Host(`${TEAMSPEAK_DOMAIN}`) && PathPrefix(`/files/`)"
+      - "traefik.http.routers.files.entrypoints=websecure"
+      - "traefik.http.routers.files.tls=true"
+      - "traefik.http.routers.files.tls.certresolver=ts-resolver"
+      - "traefik.http.routers.files.service=files"
+      - "traefik.http.services.files.loadbalancer.server.port=8051"
+
+      - "traefik.http.routers.files-internal.rule=PathPrefix(`/files/`)"
+      - "traefik.http.routers.files-internal.entrypoints=internal-router"
+      - "traefik.http.routers.files-internal.service=files-internal"
+      - "traefik.http.services.files-internal.loadbalancer.server.port=8050"
+
+  auth:
+    image: teamspeaksystems/teamspeak_auth:58rc11
+    #build: ../ts-auth
+    #image: ts-auth:latest
+    restart: on-failure
+    environment:
+      - BIND_ADDRESS=:8052
+      - MATRIX_TIMEOUT=10s
+      - MATRIX_URL=http://internal-router:8099/_matrix
+      - MATRIX_TOKENS={"${TEAMSPEAK_DOMAIN}":"${MATRIX_APPSSERVER_TOKEN}"}
+      - FILETRANSFER_JWT_KEYID=tsserver
+      - FILETRANSFER_JWT_KEY=${FILES_JWT_SHARED_SECRET}
+      - TEAMSPEAK_TIMEOUT=10s
+      - TEAMSPEAK_SERVER_WEBQUERY_URL=http://internal-router:8099/teamspeak/v1
+      - TEAMSPEAK_WEBQUERY_ADMIN_APIKEY=${TEAMSPEAK_WEBQUERY_ADMIN_APIKEY}
+      - LOG_LEVEL=info
+    expose:
+      - "8052"
+    networks:
+      ts-net:
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.auth.rule=Host(`${TEAMSPEAK_DOMAIN}`) && PathPrefix(`/authorization/`)"
+      - "traefik.http.routers.auth.entrypoints=websecure"
+      - "traefik.http.routers.auth.tls=true"
+      - "traefik.http.routers.auth.tls.certresolver=ts-resolver"
+      - "traefik.http.routers.auth.service=auth"
+      - "traefik.http.services.auth.loadbalancer.server.port=8052"
+
+  events:
+    image: teamspeaksystems/teamspeak_events:58rc11
+    #build: ../ts-events
+    #image: ts-events:latest
+    restart: on-failure
+    environment:
+      # DB events
+      - DB_EVENTS_HOST=postgresql
+      - DB_EVENTS_DATABASE=events
+      - DB_EVENTS_USER=events
+      - DB_EVENTS_PW=${DB_EVENTS_PW}
+      # DB teamspeak
+      - DB_TEAMSPEAK_HOST=postgresql
+      - DB_TEAMSPEAK_DATABASE=teamspeak
+      - DB_TEAMSPEAK_USER=teamspeak
+      - DB_TEAMSPEAK_PW=${DB_TEAMSPEAK_PW}
+      # other
+      #- APPSERVER_URL=http://internal-router:8099/matrix-appserver
+      #- FILES_URL=http://internal-router:8099/files
+      - WORKER_COUNT=101
+      - WORKER_TIMEOUT=32s
+      - JWT_KID=tsevents
+      - JWT_DURATION=15s
+      - JWT_SHARED_SECRET=${EVENTS_JWT_SHARED_SECRET}
+      - SIG=${EVENTS_SIGN_SECRET}
+      - LOG_LEVEL=info
+    networks:
+      ts-net:
+
+  feeder:
+    image: teamspeaksystems/teamspeak_feeder:58rc11
+    #build: ../ts-feeder
+    #image: ts-feeder:latest
+    restart: on-failure
+    environment:
+      - SCHEDULE_FEED=@every 10m
+      - CENTRALSEARCH_HOST=https://discovery.teamspeak.com
+      - MATRIX_HOST=http://internal-router:8099/_matrix
+      - MATRIX_TOKEN=${MATRIX_APPSSERVER_TOKEN}
+      - TEAMSPEAK_WEBINTERFACE=http://internal-router:8099/teamspeak/v1
+      - TEAMSPEAK_APIKEY=${TEAMSPEAK_WEBQUERY_ADMIN_APIKEY}
+      - TEAMSPEAK_HOST=${TEAMSPEAK_DOMAIN} # Fallback, use virtual server property PREFERRED_HOST when available
+    networks:
+      ts-net:
+
+  setup:
+    image: teamspeaksystems/teamspeak_setup:58rc11
+    #build: ../ts-setup
+    #image: ts-setup:latest
+    profiles:
+      - setup
+    networks:
+      ts-net:
+    volumes:
+      - "/var/run/docker.sock:/var/run/docker.sock:ro"
+      - type: bind
+        source: ./config
+        target: /in
+        read_only: true
+      - type: bind
+        source: .
+        target: /out
+      - type: volume
+        source: synapse
+        target: /mnt/synapse
+      - type: volume
+        source: postgresql
+        target: /postgres
+
+volumes:
+  synapse:
+  minio:
+  postgresql:
+
+networks:
+  ts-net:
