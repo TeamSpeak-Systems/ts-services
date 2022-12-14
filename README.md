@@ -36,7 +36,5 @@ For the upcoming version scheme v5.57.0rc13-beta use:
 Or for the **beta-** version scheme:
 
     git checkout tags/beta-57 -b beta-57
-    
-**Note: Also don't skip updates: if you have beta-55 and there is already a beta-57, you should update to beta-56 and *then* to beta-57.**
-    
+        
 Once you have a checkout, follow the README.md coming with the release.
