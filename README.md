@@ -7,7 +7,7 @@ The 'ts-services' repository is used for hosting the TeamSpeak 5 services as tea
 
 # Versioning and updates
 
-We started of with a **beta-58rc1** tag and currently have **beta-58rc12** but the scheme will change to **v5.58.0rc13-beta** soon.
+We started of with a **beta-58rc1** tag and currently have **beta-58rc12** but the scheme will change to **v5.58.0-beta-rc13** soon.
 
 In order to checkout a tag list them using 'git tag' command:
 
