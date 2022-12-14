@@ -9,9 +9,9 @@ Use a tag as *beta-58* as this *master branch* is only here to guide you to a pr
 
     git tag
     beta-57
-    beta-57-rc1
-    beta-57-rc2
-    beta-57-rc3
+    beta-57rc1
+    beta-57rc2
+    beta-57rc3
     beta-58rc1
     beta-58rc2
     beta-58rc3
