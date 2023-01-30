@@ -1,0 +1,27 @@
+# An ID which is unique across all application services on your homeserver. This should never be changed once set.
+id: "teamspeak-server"
+
+# this is the base URL of the application service
+url: ${MATRIX_APPSSERVER_URL}
+
+# This is the token that the AS should use as its access_token when using the Client-Server API
+# This can be anything you want.
+as_token: ${AS_TOKEN}
+
+# This is the token that the HS will use when sending requests to the AS.
+# This can be anything you want.
+hs_token: ${HS_TOKEN}
+
+# this is the local part of the desired user ID for this AS (in this case @logging:localhost)
+sender_localpart: teamspeak.server
+namespaces:
+  users:
+    - exclusive : false
+      regex: "@(ts_.*)|([a-z2-7]{53}={3}):.*"
+  rooms: []
+  aliases:
+    - exclusive: true
+      regex: "#ts_(local|admin)_.*"
+
+# No rate limiting for masqueraded users
+rate_limited: false
